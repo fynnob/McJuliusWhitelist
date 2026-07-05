@@ -35,15 +35,7 @@
       <button type="submit" id="submitBtn">Submit Whitelist</button>
     </form>
 
-    <div class="info-box" id="infoBox">
-      <h2>How to Connect:</h2>
-      <h3>Java (PC)</h3>
-      <p>IP: <strong>java.fynn.qzz.io</strong></p>
-      <p>Port: <strong>No Port</strong></p>
-      <h3>Bedrock (Phone, Tablet, Console...)</h3>
-      <p>Bedrock IP: <strong>bedrock.fynn.qzz.io</strong></p>
-      <p>Bedrock Port: <strong>48854</strong></p>
-    </div>
+    <div class="info-box" id="infoBox"></div>
   </div>
 
 <script>
@@ -82,6 +74,19 @@ const SECRET_KEY = getAuthKey();
 if (!SECRET_KEY) {
   setMessage('No access key found. Use the link Julius gave you.', 'error');
   submitBtn.disabled = true;
+  infoBox.style.display = 'none';
+} else {
+  // Always show IPs to users with a valid key right away.
+  infoBox.innerHTML = `
+      <h2>How to Connect:</h2>
+      <h3>Java (PC)</h3>
+      <p>IP: <strong>java.fynn.qzz.io</strong></p>
+      <p>Port: <strong>No Port</strong></p>
+      <h3>Bedrock (Phone, Tablet, Console...)</h3>
+      <p>Bedrock IP: <strong>bedrock.fynn.qzz.io</strong></p>
+      <p>Bedrock Port: <strong>48854</strong></p>
+  `;
+  infoBox.style.display = 'block';
 }
 
 // --- Firebase RTDB REST helpers ---
@@ -119,7 +124,6 @@ function makeId() {
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   submitBtn.disabled = true;
-  infoBox.style.display = 'none';
   setMessage('Submitting request...', 'pending');
 
   const platform = document.getElementById('platform').value;
@@ -138,8 +142,6 @@ form.addEventListener('submit', async (e) => {
     setMessage('Request received, waiting for server...', 'pending');
 
     // Poll our own node every 2s, give up after ~1 minute.
-    // (The worker itself is real-time via a streaming listener — this poll
-    // is just this one browser tab waiting to hear the result.)
     const maxAttempts = 30;
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise(r => setTimeout(r, 2000));
@@ -147,7 +149,6 @@ form.addEventListener('submit', async (e) => {
 
       if (record && record.status === 'success') {
         setMessage(record.message || ('Successfully whitelisted ' + username + '!'), 'success');
-        infoBox.style.display = 'block';
         submitBtn.disabled = false;
         return;
       }
