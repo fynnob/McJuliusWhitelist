@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Server Whitelist</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: sans-serif; background: #121212; color: #e0e0e0; text-align: center; padding: 40px 15px; }
+  .card { background: #1e1e1e; padding: 25px; border-radius: 8px; max-width: 360px; margin: 0 auto; box-shadow: 0 4px 15px rgba(0,0,0,0.6); }
+  select, input, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 4px; border: 1px solid #333; box-sizing: border-box; font-size: 16px; }
+  select, input { background: #2c2c2c; color: #fff; }
+  button { background: #2e7d32; color: white; font-weight: bold; cursor: pointer; border: none; }
+  button:hover { background: #1b5e20; }
+  button:disabled { background: #444; cursor: not-allowed; }
+  .error { color: #cf6679; font-weight: bold; }
+  .success { color: #4caf50; font-weight: bold; }
+  .pending { color: #ffb300; font-weight: bold; }
+  .info-box { background: #252525; padding: 15px; border-radius: 4px; text-align: left; font-size: 14px; margin-top: 15px; border-left: 4px solid #2e7d32; display: none; }
+  label { display: block; text-align: left; font-size: 14px; color: #aaa; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h2>Server Access</h2>
+    <p id="message"></p>
+
+    <form id="whitelistForm">
+      <label>Platform:</label>
+      <select name="platform" id="platform">
+        <option value="java">Java Edition (PC)</option>
+        <option value="bedrock">Bedrock (Console/Mobile)</option>
+      </select>
+      <label>Username:</label>
+      <input type="text" name="username" id="username" placeholder="Exact Minecraft Name" required>
+      <button type="submit" id="submitBtn">Submit Whitelist</button>
+    </form>
+
+    <div class="info-box" id="infoBox">
+      <h2>How to Connect:</h2>
+      <h3>Java (PC)</h3>
+      <p>IP: <strong>java.fynn.qzz.io</strong></p>
+      <p>Port: <strong>No Port</strong></p>
+      <h3>Bedrock (Phone, Tablet, Console...)</h3>
+      <p>Bedrock IP: <strong>bedrock.fynn.qzz.io</strong></p>
+      <p>Bedrock Port: <strong>48854</strong></p>
+    </div>
+  </div>
+
+<script>
+// ---- CONFIGURE THIS ----
+const FIREBASE_DB_URL = "https://mcjul-eb8e9-default-rtdb.firebaseio.com";
+// The secret key is NOT hardcoded here — it arrives via ?auth=... in the URL.
+// --------------------------
+
+const form = document.getElementById('whitelistForm');
+const submitBtn = document.getElementById('submitBtn');
+const messageEl = document.getElementById('message');
+const infoBox = document.getElementById('infoBox');
+
+function setMessage(text, cls) {
+  messageEl.textContent = text;
+  messageEl.className = cls || '';
+}
+
+// --- Auth key handling: pull from URL once, store in sessionStorage, scrub the URL ---
+function getAuthKey() {
+  const params = new URLSearchParams(window.location.search);
+  const urlKey = params.get('auth');
+
+  if (urlKey) {
+    sessionStorage.setItem('firebaseSecretKey', urlKey);
+    const cleanUrl = window.location.origin + window.location.pathname;
+    window.history.replaceState({}, document.title, cleanUrl);
+    return urlKey;
+  }
+
+  return sessionStorage.getItem('firebaseSecretKey');
+}
+
+const SECRET_KEY = getAuthKey();
+
+if (!SECRET_KEY) {
+  setMessage('No access key found. Use the link Julius gave you.', 'error');
+  submitBtn.disabled = true;
+}
+
+// --- Firebase RTDB REST helpers ---
+// Each request is its own child node:
+// {DB_URL}/whitelist_requests/{secretKey}/requests/{requestId}.json
+function requestChildUrl(id) {
+  return `${FIREBASE_DB_URL}/whitelist_requests/${SECRET_KEY}/requests/${id}.json`;
+}
+
+async function createRequest(id, platform, username) {
+  const res = await fetch(requestChildUrl(id), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      platform,
+      username,
+      status: 'pending',
+      message: '',
+      created_at: new Date().toISOString()
+    })
+  });
+  if (!res.ok) throw new Error('Could not submit request (status ' + res.status + ')');
+}
+
+async function fetchRequest(id) {
+  const res = await fetch(requestChildUrl(id));
+  if (!res.ok) throw new Error('Could not check request status');
+  return res.json(); // null until it exists, then the object above
+}
+
+function makeId() {
+  return (crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  submitBtn.disabled = true;
+  infoBox.style.display = 'none';
+  setMessage('Submitting request...', 'pending');
+
+  const platform = document.getElementById('platform').value;
+  const username = document.getElementById('username').value.trim();
+
+  if (!username) {
+    setMessage('Username cannot be empty!', 'error');
+    submitBtn.disabled = false;
+    return;
+  }
+
+  const myId = makeId();
+
+  try {
+    await createRequest(myId, platform, username);
+    setMessage('Request received, waiting for server...', 'pending');
+
+    // Poll our own node every 2s, give up after ~1 minute.
+    // (The worker itself is real-time via a streaming listener — this poll
+    // is just this one browser tab waiting to hear the result.)
+    const maxAttempts = 30;
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const record = await fetchRequest(myId);
+
+      if (record && record.status === 'success') {
+        setMessage(record.message || ('Successfully whitelisted ' + username + '!'), 'success');
+        infoBox.style.display = 'block';
+        submitBtn.disabled = false;
+        return;
+      }
+      if (record && record.status === 'error') {
+        setMessage(record.message || 'Something went wrong.', 'error');
+        submitBtn.disabled = false;
+        return;
+      }
+    }
+
+    setMessage('Still processing — the worker may be offline. Try again later.', 'error');
+    submitBtn.disabled = false;
+
+  } catch (err) {
+    setMessage(err.message, 'error');
+    submitBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
